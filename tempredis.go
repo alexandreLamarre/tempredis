@@ -13,6 +13,30 @@ import (
 	"time"
 )
 
+type TempRedisOptions struct {
+	wr io.Writer
+}
+
+func (o *TempRedisOptions) apply(opts []TempRedisOption) {
+	for _, opt := range opts {
+		opt(o)
+	}
+}
+
+func DefaultTempRedisOptions() *TempRedisOptions {
+	return &TempRedisOptions{
+		wr: io.Discard,
+	}
+}
+
+type TempRedisOption func(*TempRedisOptions)
+
+func WithWriter(w io.Writer) TempRedisOption {
+	return func(o *TempRedisOptions) {
+		o.wr = w
+	}
+}
+
 // Server encapsulates the configuration, starting, and stopping of a single
 // redis-server process that is reachable via a local Unix socket.
 type Server struct {
@@ -22,13 +46,17 @@ type Server struct {
 	stdout    io.Reader
 	stdoutBuf bytes.Buffer
 	stderr    io.Reader
+
+	TempRedisOptions
 }
 
 // Start initiates a new redis-server process configured with the given
 // configuration. redis-server will listen on a temporary local Unix socket. An
 // error is returned if redis-server is unable to successfully start for any
 // reason.
-func Start(config Config) (server *Server, err error) {
+func Start(config Config, opts ...TempRedisOption) (server *Server, err error) {
+	options := DefaultTempRedisOptions()
+	options.apply(opts)
 	if config == nil {
 		config = Config{}
 	}
@@ -46,8 +74,9 @@ func Start(config Config) (server *Server, err error) {
 	}
 
 	server = &Server{
-		dir:    dir,
-		config: config,
+		dir:              dir,
+		config:           config,
+		TempRedisOptions: *options,
 	}
 	err = server.start()
 	if err != nil {
@@ -124,6 +153,7 @@ func (s *Server) waitFor() (err error) {
 	for scanner.Scan() {
 		line = scanner.Text()
 		fmt.Fprintf(&s.stdoutBuf, "%s\n", line)
+		fmt.Fprintf(s.wr, "%s\n", line)
 		for _, s := range ready {
 			if strings.Contains(line, s) {
 				return nil
